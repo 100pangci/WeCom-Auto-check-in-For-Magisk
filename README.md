@@ -1,4 +1,4 @@
-# Auto Check-in Magisk 模块
+# WeCom Auto Check-in For Magisk
 
 自动在手机时间 08:10 和 17:30 打开企业微信考勤页面 `com.tencent.wework.enterprise.attendance.controller.AttendanceActivity2`。
 
