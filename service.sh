@@ -87,6 +87,37 @@ wake_screen() {
   sleep 1
 }
 
+dismiss_keyguard_if_possible() {
+  if command -v wm >/dev/null 2>&1; then
+    wm dismiss-keyguard 2>/dev/null || true
+    sleep 1
+  fi
+
+  input keyevent 82 2>/dev/null || true
+  sleep 1
+  input swipe 540 1800 540 600 200 2>/dev/null || true
+  sleep 1
+}
+
+get_next_trigger_label() {
+  NOW_TIME=${1:-$(date +%H:%M)}
+
+  for T in $TRIGGER_TIMES; do
+    if [ "$NOW_TIME" \< "$T" ]; then
+      echo "今日 $T"
+      return 0
+    fi
+  done
+
+  FIRST_TRIGGER=$(echo "$TRIGGER_TIMES" | awk '{print $1}')
+  echo "明日 $FIRST_TRIGGER"
+}
+
+update_idle_status() {
+  NEXT_TRIGGER=$(get_next_trigger_label "$1")
+  update_module_status "服务运行中，下次触发: $NEXT_TRIGGER"
+}
+
 # 拉取指定年份全年节假日，写入缓存
 # API: https://timor.tech/api/holiday/year/YYYY
 # JSON 格式: {"code":0,"holiday":{"MM-DD":{"holiday":true/false,...},...}}
@@ -155,6 +186,7 @@ launch_attendance() {
   log "trigger launch $COMPONENT"
   update_module_status "正在打开企业微信打卡界面 ($NOW)"
   wake_screen
+  dismiss_keyguard_if_possible
   if command -v cmd >/dev/null 2>&1; then
     cmd activity start-activity --user 0 -n "$COMPONENT" --activity-clear-task 2>&1 >> "$LOGFILE"
   else
@@ -171,7 +203,7 @@ update_module_status "开机等待 60 秒后初始化"
 sleep 60
 
 ensure_holidays_cached
-update_module_status "服务运行中，等待触发: $TRIGGER_TIMES"
+update_idle_status
 
 LAST_TRIGGER=""
 while true; do
@@ -179,16 +211,18 @@ while true; do
   # 每天 00:01 检测跨年
   if [ "$NOW" = "00:01" ] && [ "$LAST_TRIGGER" != "00:01" ]; then
     ensure_holidays_cached
-    update_module_status "服务运行中，节假日缓存已检查"
+    update_idle_status "$NOW"
     LAST_TRIGGER="00:01"
   fi
   for T in $TRIGGER_TIMES; do
     if [ "$NOW" = "$T" ] && [ "$LAST_TRIGGER" != "$NOW" ]; then
       if is_workday; then
         launch_attendance
+        update_idle_status "$NOW"
       else
         log "holiday/weekend detected, skip launch"
         update_module_status "今日跳过打卡 ($NOW，节假日/周末)"
+        update_idle_status "$NOW"
       fi
       LAST_TRIGGER="$NOW"
       break
