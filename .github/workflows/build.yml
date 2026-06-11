@@ -16,6 +16,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set version from tag
+        run: |
+          TAG=${{ github.ref_name }}
+          VER=${TAG#v}
+          # versionCode: 去掉点号转为纯数字，e.g. 1.2.3 -> 10203
+          CODE=$(echo "$VER" | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')
+          sed -i "s/^version=.*/version=$TAG/" module.prop
+          sed -i "s/^versionCode=.*/versionCode=$CODE/" module.prop
+
       - name: Build Magisk zip
         run: |
           zip -r auto_check_in_magisk.zip module.prop service.sh README.md

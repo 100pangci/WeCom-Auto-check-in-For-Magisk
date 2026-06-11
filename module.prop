@@ -1,7 +1,7 @@
 id=auto_check_in
-name=Auto Check-in for WeWork
-version=1.0
-versionCode=1
-author=GitHub Copilot
-description=Magisk module to open WeWork attendance activity at 08:10 and 17:30
+name=企业微信自动打开打卡界面
+version=v0.0.0
+versionCode=0
+author=ywpc
+description=自动在早上8:10和下午17:30打开企业微信打卡界面，可自定义时间，自动跳过节假日，自动识别调休补班。
 minMagisk=26
