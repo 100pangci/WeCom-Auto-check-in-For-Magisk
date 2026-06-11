@@ -116,7 +116,8 @@ launch_attendance() {
 
 log "auto_check_in service started"
 update_module_status "服务启动中"
-sleep 20
+update_module_status "开机等待 60 秒后初始化"
+sleep 60
 
 ensure_holidays_cached
 update_module_status "服务运行中，等待触发: $TRIGGER_TIMES"
