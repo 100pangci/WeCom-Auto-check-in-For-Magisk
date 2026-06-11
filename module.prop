@@ -1,0 +1,7 @@
+id=auto_check_in
+name=Auto Check-in for WeWork
+version=1.0
+versionCode=1
+author=GitHub Copilot
+description=Magisk module to open WeWork attendance activity at 08:10 and 17:30
+minMagisk=26
