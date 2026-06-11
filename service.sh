@@ -113,11 +113,10 @@ fetch_year_holidays() {
   # 解析: 提取 "MM-DD":{"holiday":true 或 false
   # 输出格式: YYYY-MM-DD 1(节假日) 或 YYYY-MM-DD 0(调休)
   echo "$RESULT" | grep -oE '"[0-9]{2}-[0-9]{2}":\{"holiday":(true|false)' | \
-    sed 's/"//g; s/:{\"holiday\"://g' | \
+    sed -E 's/"([0-9]{2}-[0-9]{2})":\{"holiday":(true|false)/\1 \2/' | \
     awk -v yr="$YEAR" '{
-      split($1, a, ":")
-      date = yr"-"a[1]
-      flag = (a[2]=="true") ? 1 : 0
+      date = yr"-"$1
+      flag = ($2=="true") ? 1 : 0
       print date, flag
     }' >> "$HOLIDAY_CACHE"
 
