@@ -1,13 +1,32 @@
 #!/system/bin/sh
 
-LOGFILE=/data/adb/modules/auto_check_in/service.log
+MODDIR=/data/adb/modules/auto_check_in
+LOGFILE=$MODDIR/service.log
+MODULE_PROP=$MODDIR/module.prop
 COMPONENT="com.tencent.wework/com.tencent.wework.enterprise.attendance.controller.AttendanceActivity2"
 TRIGGER_TIMES="08:10 17:30"
 # 全年节假日缓存，格式: 每行 "YYYY-MM-DD 0|1"，0=需打卡 1=跳过
-HOLIDAY_CACHE=/data/adb/modules/auto_check_in/holiday_year.txt
+HOLIDAY_CACHE=$MODDIR/holiday_year.txt
 
 log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"
+}
+
+update_module_status() {
+  STATUS=$1
+  [ -z "$STATUS" ] && return 0
+  [ ! -f "$MODULE_PROP" ] && return 0
+
+  DESC="当前状态: $STATUS"
+  TMP_PROP="${MODULE_PROP}.tmp"
+
+  if grep -q '^description=' "$MODULE_PROP" 2>/dev/null; then
+    sed "s|^description=.*|description=$DESC|" "$MODULE_PROP" > "$TMP_PROP" && mv "$TMP_PROP" "$MODULE_PROP"
+  else
+    cp "$MODULE_PROP" "$TMP_PROP" && {
+      echo "description=$DESC"
+    } >> "$TMP_PROP" && mv "$TMP_PROP" "$MODULE_PROP"
+  fi
 }
 
 wake_screen() {
@@ -26,8 +45,12 @@ wake_screen() {
 fetch_year_holidays() {
   YEAR=$1
   log "fetching holiday data for $YEAR"
+  update_module_status "同步 $YEAR 年节假日数据中"
   RESULT=$(curl -sf --max-time 30 "https://timor.tech/api/holiday/year/$YEAR" 2>/dev/null)
-  [ -z "$RESULT" ] && return 1
+  if [ -z "$RESULT" ]; then
+    update_module_status "$YEAR 年节假日数据同步失败"
+    return 1
+  fi
 
   # 先删除该年旧缓存行，避免重复
   if [ -f "$HOLIDAY_CACHE" ]; then
@@ -47,6 +70,7 @@ fetch_year_holidays() {
     }' >> "$HOLIDAY_CACHE"
 
   log "holiday data for $YEAR cached"
+  update_module_status "$YEAR 年节假日数据已同步"
   return 0
 }
 
@@ -78,6 +102,7 @@ is_workday() {
 
 launch_attendance() {
   log "trigger launch $COMPONENT"
+  update_module_status "正在打开企业微信打卡界面 ($NOW)"
   wake_screen
   if command -v cmd >/dev/null 2>&1; then
     cmd activity start-activity --user 0 -n "$COMPONENT" --activity-clear-task 2>&1 >> "$LOGFILE"
@@ -86,12 +111,15 @@ launch_attendance() {
   fi
   sleep 1
   log "launch complete"
+  update_module_status "已触发打卡界面 ($NOW)"
 }
 
 log "auto_check_in service started"
+update_module_status "服务启动中"
 sleep 20
 
 ensure_holidays_cached
+update_module_status "服务运行中，等待触发: $TRIGGER_TIMES"
 
 LAST_TRIGGER=""
 while true; do
@@ -99,6 +127,7 @@ while true; do
   # 每天 00:01 检测跨年
   if [ "$NOW" = "00:01" ] && [ "$LAST_TRIGGER" != "00:01" ]; then
     ensure_holidays_cached
+    update_module_status "服务运行中，节假日缓存已检查"
     LAST_TRIGGER="00:01"
   fi
   for T in $TRIGGER_TIMES; do
@@ -107,6 +136,7 @@ while true; do
         launch_attendance
       else
         log "holiday/weekend detected, skip launch"
+        update_module_status "今日跳过打卡 ($NOW，节假日/周末)"
       fi
       LAST_TRIGGER="$NOW"
       break
