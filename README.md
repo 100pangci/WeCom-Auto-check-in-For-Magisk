@@ -1,6 +1,7 @@
 # WeCom Auto Check-in For Magisk
 
 自动在手机时间 08:10 和 17:30 打开企业微信考勤页面 `com.tencent.wework.enterprise.attendance.controller.AttendanceActivity2`。
+支持跳过节假日，周末，并在调休日打卡。
 
 ## 安装方法
 
