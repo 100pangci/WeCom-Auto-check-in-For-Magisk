@@ -34,8 +34,7 @@ jobs:
           body: Auto-generated Magisk module release for tag ${{ github.ref_name }}
           draft: false
           prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload release asset
         uses: actions/upload-release-asset@v1
@@ -44,3 +43,4 @@ jobs:
           asset_path: build/auto_check_in_magisk.zip
           asset_name: auto_check_in_magisk.zip
           asset_content_type: application/zip
+          token: ${{ secrets.GITHUB_TOKEN }}
