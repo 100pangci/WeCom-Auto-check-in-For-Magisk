@@ -36,6 +36,7 @@
   - `holiday_year.txt` 缓存
   - `service.log` 日志
   - Magisk 里看到的模块状态
+- `action.sh` 与 `service.sh` 现在共用 `common.sh`，下载、解析、状态更新逻辑保持一致。
 - 适合用于以下场景：
   - 你刚装完模块，想立刻同步节假日数据
   - 你怀疑开机时网络未就绪，想手动重拉一次

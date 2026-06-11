@@ -27,7 +27,7 @@ jobs:
 
       - name: Build Magisk zip
         run: |
-          zip -r auto_check_in_magisk.zip module.prop service.sh README.md
+          zip -r auto_check_in_magisk.zip module.prop service.sh action.sh common.sh README.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
