@@ -12,6 +12,57 @@ log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"
 }
 
+fetch_url() {
+  URL=$1
+  FETCH_TMP="${MODDIR}/fetch_response.tmp"
+  FETCH_ERR="${MODDIR}/fetch_error.tmp"
+
+  rm -f "$FETCH_TMP" "$FETCH_ERR"
+
+  if command -v curl >/dev/null 2>&1; then
+    log "fetch_url: trying curl"
+    if curl -fsL --max-time 30 "$URL" > "$FETCH_TMP" 2> "$FETCH_ERR"; then
+      cat "$FETCH_TMP"
+      rm -f "$FETCH_TMP" "$FETCH_ERR"
+      return 0
+    fi
+    log "fetch_url: curl failed: $(tr '\n' ' ' < "$FETCH_ERR")"
+
+    log "fetch_url: trying curl -k"
+    if curl -kfsL --max-time 30 "$URL" > "$FETCH_TMP" 2> "$FETCH_ERR"; then
+      cat "$FETCH_TMP"
+      rm -f "$FETCH_TMP" "$FETCH_ERR"
+      return 0
+    fi
+    log "fetch_url: curl -k failed: $(tr '\n' ' ' < "$FETCH_ERR")"
+  else
+    log "fetch_url: curl not found"
+  fi
+
+  if command -v wget >/dev/null 2>&1; then
+    log "fetch_url: trying wget"
+    if wget -q -O "$FETCH_TMP" "$URL" 2> "$FETCH_ERR"; then
+      cat "$FETCH_TMP"
+      rm -f "$FETCH_TMP" "$FETCH_ERR"
+      return 0
+    fi
+    log "fetch_url: wget failed: $(tr '\n' ' ' < "$FETCH_ERR")"
+
+    log "fetch_url: trying wget --no-check-certificate"
+    if wget --no-check-certificate -q -O "$FETCH_TMP" "$URL" 2> "$FETCH_ERR"; then
+      cat "$FETCH_TMP"
+      rm -f "$FETCH_TMP" "$FETCH_ERR"
+      return 0
+    fi
+    log "fetch_url: wget --no-check-certificate failed: $(tr '\n' ' ' < "$FETCH_ERR")"
+  else
+    log "fetch_url: wget not found"
+  fi
+
+  rm -f "$FETCH_TMP" "$FETCH_ERR"
+  return 1
+}
+
 update_module_status() {
   STATUS=$1
   [ -z "$STATUS" ] && return 0
@@ -46,8 +97,9 @@ fetch_year_holidays() {
   YEAR=$1
   log "fetching holiday data for $YEAR"
   update_module_status "同步 $YEAR 年节假日数据中"
-  RESULT=$(curl -sf --max-time 30 "https://timor.tech/api/holiday/year/$YEAR" 2>/dev/null)
+  RESULT=$(fetch_url "https://timor.tech/api/holiday/year/$YEAR")
   if [ -z "$RESULT" ]; then
+    log "fetch holiday data for $YEAR failed in current shell environment"
     update_module_status "$YEAR 年节假日数据同步失败"
     return 1
   fi
