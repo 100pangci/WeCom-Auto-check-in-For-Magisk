@@ -12,89 +12,29 @@ LOG_PREFIX=""
 
 . "$MODDIR/common.sh"
 
-is_screen_awake() {
-  if command -v dumpsys >/dev/null 2>&1; then
-    dumpsys power 2>/dev/null | grep -qE 'mWakefulness=Awake|Display Power: state=ON|mInteractive=true'
-    return $?
-  fi
-  return 1
-}
-
-wake_screen() {
-  if is_screen_awake; then
-    log "screen already awake"
-    return 0
-  fi
-
-  log "waking screen"
-  input keyevent 224 2>/dev/null || true
-  sleep 1
-
-  if ! is_screen_awake; then
-    input keyevent 26 2>/dev/null || true
-    sleep 1
-  fi
-}
-
-dismiss_keyguard_if_possible() {
-  if command -v wm >/dev/null 2>&1; then
-    wm dismiss-keyguard 2>/dev/null || true
-    sleep 1
-  fi
-
-  input keyevent 82 2>/dev/null || true
-  sleep 1
-  input swipe 540 1800 540 600 200 2>/dev/null || true
-  sleep 1
-}
-
-start_attendance_activity() {
-  START_LOG="${MODDIR}/launch_result.tmp"
-  rm -f "$START_LOG"
-
-  log "launch: warming up app via monkey"
-  if command -v monkey >/dev/null 2>&1; then
-    monkey -p "$PACKAGE_NAME" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
-    sleep 2
-  fi
-
-  if command -v am >/dev/null 2>&1; then
-    log "launch: trying am start"
-    if am start --user 0 -f 0x14000000 -n "$COMPONENT" 2>&1 | tee "$START_LOG" >> "$LOGFILE"; then
-      if ! grep -qiE 'error|exception|failed' "$START_LOG"; then
-        rm -f "$START_LOG"
-        return 0
-      fi
+# --- 判断今天是否为工作日 ---
+# 返回值: 0=工作日(需打卡)  1=节假日/周末(跳过)
+is_workday() {
+  TODAY=$(date +%Y-%m-%d)
+  LINE=$(grep "^$TODAY " "$HOLIDAY_CACHE" 2>/dev/null | tail -1)
+  if [ -n "$LINE" ]; then
+    TYPE=$(echo "$LINE" | cut -d' ' -f2)
+    # 缓存格式: 1=节假日(跳过打卡)  0=调休(需打卡)
+    if [ "$TYPE" = "1" ]; then
+      return 1  # 跳过
+    else
+      return 0  # 需打卡
     fi
-    log "launch: am start did not succeed cleanly"
   fi
-
-  if command -v cmd >/dev/null 2>&1; then
-    log "launch: trying cmd activity start-activity"
-    if cmd activity start-activity --user 0 -f 0x14000000 -n "$COMPONENT" 2>&1 | tee "$START_LOG" >> "$LOGFILE"; then
-      if ! grep -qiE 'error|exception|failed' "$START_LOG"; then
-        rm -f "$START_LOG"
-        return 0
-      fi
-    fi
-    log "launch: cmd activity did not succeed cleanly"
+  # 不在特殊列表：按周几判断
+  DOW=$(date +%u)
+  if [ "$DOW" -ge 6 ]; then
+    return 1  # 周末，跳过
   fi
-
-  if command -v monkey >/dev/null 2>&1; then
-    log "launch: trying monkey fallback for $PACKAGE_NAME"
-    if monkey -p "$PACKAGE_NAME" -c android.intent.category.LAUNCHER 1 2>&1 | tee "$START_LOG" >> "$LOGFILE"; then
-      if ! grep -qiE 'error|exception|failed' "$START_LOG"; then
-        rm -f "$START_LOG"
-        return 0
-      fi
-    fi
-    log "launch: monkey fallback did not succeed cleanly"
-  fi
-
-  rm -f "$START_LOG"
-  return 1
+  return 0  # 工作日，需打卡
 }
 
+# --- 获取下次触发时间的描述标签 ---
 get_next_trigger_label() {
   NOW_TIME=${1:-$(date +%H:%M)}
 
@@ -114,7 +54,7 @@ update_idle_status() {
   update_module_status "服务运行中，下次触发: $NEXT_TRIGGER"
 }
 
-# 确保当年数据已缓存；12月时预取下一年
+# --- 确保当年数据已缓存；12月时预取下一年 ---
 ensure_holidays_cached() {
   YEAR=$(date +%Y)
   if ! grep -q "^$YEAR-" "$HOLIDAY_CACHE" 2>/dev/null; then
@@ -129,26 +69,14 @@ ensure_holidays_cached() {
   fi
 }
 
-is_workday() {
-  TODAY=$(date +%Y-%m-%d)
-  LINE=$(grep "^$TODAY " "$HOLIDAY_CACHE" 2>/dev/null | tail -1)
-  if [ -n "$LINE" ]; then
-    TYPE=$(echo "$LINE" | cut -d' ' -f2)
-    # 1=节假日跳过, 0=调休需打卡
-    return "$TYPE"
-  fi
-  # 不在特殊列表：按周几，周六日跳过
-  DOW=$(date +%u)
-  [ "$DOW" -ge 6 ] && return 1 || return 0
-}
-
+# --- 拉起打卡 (锁屏唤醒 + 解锁 + 启动 Activity) ---
 launch_attendance() {
   log "trigger launch $COMPONENT"
   update_module_status "正在打开企业微信打卡界面 ($NOW)"
   wake_screen
   dismiss_keyguard_if_possible
 
-  if start_attendance_activity; then
+  if start_attendance_activity "$COMPONENT" "$PACKAGE_NAME"; then
     sleep 1
     log "launch complete"
     update_module_status "已触发打卡界面 ($NOW)"
@@ -160,8 +88,10 @@ launch_attendance() {
   return 1
 }
 
+# ========== 主流程 ==========
+
+rotate_log_if_large
 log "auto_check_in service started"
-update_module_status "服务启动中"
 update_module_status "开机等待 60 秒后初始化"
 sleep 60
 
@@ -169,30 +99,64 @@ ensure_holidays_cached
 update_idle_status
 
 LAST_TRIGGER=""
+TRIGGER_TS_LIST=""
+# 将触发时间转换为分钟数用于精确比较
+for T in $TRIGGER_TIMES; do
+  H=${T%:*}
+  M=${T#*:}
+  TRIGGER_TS_LIST="$TRIGGER_TS_LIST $((10#$H * 60 + 10#$M))"
+done
+
 while true; do
+  rotate_log_if_large
   NOW=$(date +%H:%M)
+  NOW_TS=$(( $(date +%-H) * 60 + $(date +%-M) ))
+
   # 每天 00:01 检测跨年
   if [ "$NOW" = "00:01" ] && [ "$LAST_TRIGGER" != "00:01" ]; then
     ensure_holidays_cached
     update_idle_status "$NOW"
     LAST_TRIGGER="00:01"
   fi
+
+  # 检查每个触发时间是否到达
   for T in $TRIGGER_TIMES; do
     if [ "$NOW" = "$T" ] && [ "$LAST_TRIGGER" != "$NOW" ]; then
       if is_workday; then
         launch_attendance
-        update_idle_status "$NOW"
       else
         log "holiday/weekend detected, skip launch"
         update_module_status "今日跳过打卡 ($NOW，节假日/周末)"
-        update_idle_status "$NOW"
       fi
+      update_idle_status "$NOW"
       LAST_TRIGGER="$NOW"
       break
     fi
   done
+
+  # 跨分钟时重置 LAST_TRIGGER，确保下次能触发
   if [ "$NOW" != "$LAST_TRIGGER" ]; then
     LAST_TRIGGER=""
   fi
-  sleep 20
+
+  # 智能 sleep: 计算距下一个触发时间的秒数，减少无效轮询
+  NEXT_SLEEP=20
+  NEXT_TRIGGER_TS=""
+  for TS in $TRIGGER_TS_LIST; do
+    if [ "$TS" -gt "$NOW_TS" ]; then
+      NEXT_TRIGGER_TS=$TS
+      break
+    fi
+  done
+  if [ -z "$NEXT_TRIGGER_TS" ]; then
+    # 所有触发时间已过，计算到明天第一个触发时间的分钟数
+    FIRST_TS=$(echo "$TRIGGER_TS_LIST" | awk '{print $1}')
+    NEXT_TRIGGER_TS=$((FIRST_TS + 1440))
+  fi
+  NEXT_SLEEP=$(( (NEXT_TRIGGER_TS - NOW_TS) * 60 ))
+  # 最多 sleep 60 秒，避免一次性 sleep 太久错过中间的跨年检测
+  if [ "$NEXT_SLEEP" -gt 60 ] || [ "$NEXT_SLEEP" -le 0 ] 2>/dev/null; then
+    NEXT_SLEEP=20
+  fi
+  sleep "$NEXT_SLEEP"
 done
