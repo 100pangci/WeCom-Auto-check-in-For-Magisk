@@ -4,6 +4,7 @@ MODDIR=/data/adb/modules/auto_check_in
 LOGFILE=$MODDIR/service.log
 MODULE_PROP=$MODDIR/module.prop
 COMPONENT="com.tencent.wework/com.tencent.wework.enterprise.attendance.controller.AttendanceActivity2"
+PACKAGE_NAME="com.tencent.wework"
 TRIGGER_TIMES="08:10 17:30"
 # 全年节假日缓存，格式: 每行 "YYYY-MM-DD 0|1"，0=需打卡 1=跳过
 HOLIDAY_CACHE=$MODDIR/holiday_year.txt
@@ -11,11 +12,28 @@ LOG_PREFIX=""
 
 . "$MODDIR/common.sh"
 
+is_screen_awake() {
+  if command -v dumpsys >/dev/null 2>&1; then
+    dumpsys power 2>/dev/null | grep -qE 'mWakefulness=Awake|Display Power: state=ON|mInteractive=true'
+    return $?
+  fi
+  return 1
+}
+
 wake_screen() {
-  input keyevent 26 2>/dev/null || true
-  sleep 1
+  if is_screen_awake; then
+    log "screen already awake"
+    return 0
+  fi
+
+  log "waking screen"
   input keyevent 224 2>/dev/null || true
   sleep 1
+
+  if ! is_screen_awake; then
+    input keyevent 26 2>/dev/null || true
+    sleep 1
+  fi
 }
 
 dismiss_keyguard_if_possible() {
@@ -28,6 +46,53 @@ dismiss_keyguard_if_possible() {
   sleep 1
   input swipe 540 1800 540 600 200 2>/dev/null || true
   sleep 1
+}
+
+start_attendance_activity() {
+  START_LOG="${MODDIR}/launch_result.tmp"
+  rm -f "$START_LOG"
+
+  log "launch: warming up app via monkey"
+  if command -v monkey >/dev/null 2>&1; then
+    monkey -p "$PACKAGE_NAME" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+    sleep 2
+  fi
+
+  if command -v am >/dev/null 2>&1; then
+    log "launch: trying am start"
+    if am start --user 0 -f 0x14000000 -n "$COMPONENT" 2>&1 | tee "$START_LOG" >> "$LOGFILE"; then
+      if ! grep -qiE 'error|exception|failed' "$START_LOG"; then
+        rm -f "$START_LOG"
+        return 0
+      fi
+    fi
+    log "launch: am start did not succeed cleanly"
+  fi
+
+  if command -v cmd >/dev/null 2>&1; then
+    log "launch: trying cmd activity start-activity"
+    if cmd activity start-activity --user 0 -f 0x14000000 -n "$COMPONENT" 2>&1 | tee "$START_LOG" >> "$LOGFILE"; then
+      if ! grep -qiE 'error|exception|failed' "$START_LOG"; then
+        rm -f "$START_LOG"
+        return 0
+      fi
+    fi
+    log "launch: cmd activity did not succeed cleanly"
+  fi
+
+  if command -v monkey >/dev/null 2>&1; then
+    log "launch: trying monkey fallback for $PACKAGE_NAME"
+    if monkey -p "$PACKAGE_NAME" -c android.intent.category.LAUNCHER 1 2>&1 | tee "$START_LOG" >> "$LOGFILE"; then
+      if ! grep -qiE 'error|exception|failed' "$START_LOG"; then
+        rm -f "$START_LOG"
+        return 0
+      fi
+    fi
+    log "launch: monkey fallback did not succeed cleanly"
+  fi
+
+  rm -f "$START_LOG"
+  return 1
 }
 
 get_next_trigger_label() {
@@ -82,14 +147,17 @@ launch_attendance() {
   update_module_status "正在打开企业微信打卡界面 ($NOW)"
   wake_screen
   dismiss_keyguard_if_possible
-  if command -v cmd >/dev/null 2>&1; then
-    cmd activity start-activity --user 0 -n "$COMPONENT" --activity-clear-task 2>&1 >> "$LOGFILE"
-  else
-    am start --user 0 -n "$COMPONENT" -a android.intent.action.MAIN -c android.intent.category.LAUNCHER 2>&1 >> "$LOGFILE"
+
+  if start_attendance_activity; then
+    sleep 1
+    log "launch complete"
+    update_module_status "已触发打卡界面 ($NOW)"
+    return 0
   fi
-  sleep 1
-  log "launch complete"
-  update_module_status "已触发打卡界面 ($NOW)"
+
+  log "launch failed after all fallbacks"
+  update_module_status "打开打卡界面失败 ($NOW)"
+  return 1
 }
 
 log "auto_check_in service started"
